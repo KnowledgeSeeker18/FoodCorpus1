@@ -19,8 +19,7 @@ import {
   Calendar,
   MapPin
 } from "lucide-react";
-
-const API_BASE_URL = 'https://api.corpus.swecha.org/api/v1';
+import { API_BASE_URL, clearToken } from "@/lib/auth";
 
 interface Record {
   id: string;
@@ -55,7 +54,28 @@ export const Home = () => {
 
     try {
       setIsLoading(true);
-      const response = await fetch(`${API_BASE_URL}/records/my`, {
+
+      // First, get user ID from /auth/me
+      let userId = localStorage.getItem('userId');
+      if (!userId) {
+        const meResponse = await fetch(`${API_BASE_URL}/auth/me`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        });
+        const meData = await meResponse.json();
+        if (meResponse.ok && meData.id) {
+          userId = meData.id;
+          localStorage.setItem('userId', userId); // Store for future use
+        } else {
+          throw new Error(meData.message || 'Failed to get user ID for fetching contributions.');
+        }
+      }
+
+      // Then, fetch user contributions using the user ID
+      const response = await fetch(`${API_BASE_URL}/users/${userId}/contributions`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
@@ -64,16 +84,23 @@ export const Home = () => {
 
       if (response.ok) {
         const data = await response.json();
-        setRecords(data.records || []);
+        let allContributions: Record[] = [];
+        if (data.audio_contributions) allContributions = allContributions.concat(data.audio_contributions.map((c: Record) => ({ ...c, media_type: 'audio' })));
+        if (data.video_contributions) allContributions = allContributions.concat(data.video_contributions.map((c: Record) => ({ ...c, media_type: 'video' })));
+        if (data.text_contributions) allContributions = allContributions.concat(data.text_contributions.map((c: Record) => ({ ...c, media_type: 'text' })));
+        if (data.image_contributions) allContributions = allContributions.concat(data.image_contributions.map((c: Record) => ({ ...c, media_type: 'image' })));
+        setRecords(allContributions || []);
       } else if (response.status === 401) {
-        localStorage.removeItem('token');
-        navigate('/login');
+        clearToken(); // Use clearToken from auth.ts
       } else {
-        setError('Failed to fetch records');
+        const errorData = await response.json();
+        console.error('Failed to fetch records:', response.status, errorData);
+        setError(errorData.message || 'Failed to fetch records');
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error fetching records:', error);
-      setError('An error occurred while fetching your records');
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred while fetching your records.';
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -242,7 +269,7 @@ export const Home = () => {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {records.slice(0, 10).map((record, index) => {
+                  {records.slice(0, 5).map((record, index) => {
                     const Icon = getMediaIcon(record.media_type);
                     return (
                       <div

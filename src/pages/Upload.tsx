@@ -11,9 +11,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { MapPin, Loader2, Upload as UploadIcon, FileText } from "lucide-react";
-
-const API_BASE_URL = 'https://api.corpus.swecha.org/api/v1';
-const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+import { API_BASE_URL } from "@/lib/auth";
+import { CHUNK_SIZE, uploadFileInChunks } from "@/lib/upload";
 
 export const Upload = () => {
   const [formData, setFormData] = useState({
@@ -22,9 +21,9 @@ export const Upload = () => {
     latitude: '',
     longitude: '',
     textContent: '',
-    categoryId: '1', // Default food category
+    categoryId: '833299f6-ff1c-4fde-804f-6d3b3877c76e', // Updated to the correct category ID
     language: 'english',
-    releaseRights: 'yes'
+    releaseRights: ''
   });
   
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -67,7 +66,7 @@ export const Upload = () => {
           description: "Your current location has been added to the upload.",
         });
       },
-      (error) => {
+      (error: GeolocationPositionError) => { // Specify GeolocationPositionError type
         setIsGettingLocation(false);
         let errorMessage = 'Unable to retrieve your location.';
         switch (error.code) {
@@ -88,44 +87,6 @@ export const Upload = () => {
         });
       }
     );
-  };
-
-  const uploadFileInChunks = async (file: File, token: string): Promise<string> => {
-    const fileSize = file.size;
-    const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
-    const uploadUuid: string = crypto.randomUUID();
-    const filename = file.name;
-
-    for (let i = 0; i < totalChunks; i++) {
-      const start = i * CHUNK_SIZE;
-      const end = Math.min(fileSize, start + CHUNK_SIZE);
-      const chunk = file.slice(start, end);
-
-      const formData = new FormData();
-      formData.append('chunk', chunk);
-      formData.append('filename', filename);
-      formData.append('chunk_index', i.toString());
-      formData.append('total_chunks', totalChunks.toString());
-      formData.append('upload_uuid', uploadUuid);
-
-      const progress = Math.floor(((i + 1) / totalChunks) * 100);
-      setUploadProgress(progress);
-
-      const response = await fetch(`${API_BASE_URL}/records/upload/chunk`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
-        body: formData
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Chunk upload failed: ${errorData.message || response.statusText}`);
-      }
-    }
-
-    return uploadUuid;
   };
 
   const getMediaType = (file: File | null, textContent: string): string => {
@@ -187,13 +148,13 @@ export const Upload = () => {
       let totalChunks = 1;
 
       if (selectedFile) {
-        uploadUuid = await uploadFileInChunks(selectedFile, token);
+        uploadUuid = await uploadFileInChunks(selectedFile, token, setUploadProgress);
         totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE);
       } else if (formData.textContent && mediaType === 'text') {
         const textBlob = new Blob([formData.textContent], { type: 'text/plain' });
         const textFile = new File([textBlob], 'text-content.txt', { type: 'text/plain' });
         fileToUpload = textFile;
-        uploadUuid = await uploadFileInChunks(textFile, token);
+        uploadUuid = await uploadFileInChunks(textFile, token, setUploadProgress);
         totalChunks = 1;
       }
 
@@ -246,6 +207,9 @@ export const Upload = () => {
         throw new Error(`Finalization failed: ${errorData.message || finalizeResponse.statusText}`);
       }
 
+      const finalResult = await finalizeResponse.json(); // Capture the final result
+      const recordId = finalResult.id; // Assuming the record ID is also in the response
+
       setUploadProgress(100);
       toast({
         title: "Upload successful!",
@@ -259,19 +223,20 @@ export const Upload = () => {
         latitude: '',
         longitude: '',
         textContent: '',
-        categoryId: '1',
+        categoryId: '833299f6-ff1c-4fde-804f-6d3b3877c76e', // Reset to the correct category ID
         language: 'english',
-        releaseRights: 'yes'
+        releaseRights: '' // Reset to empty string
       });
       setSelectedFile(null);
       setUploadProgress(0);
 
-    } catch (error: any) {
+    } catch (error: unknown) { // Specify unknown type for catch clause variable
       console.error('Upload error:', error);
-      setError(error.message || 'An error occurred during upload.');
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
+      setError(errorMessage);
       toast({
         title: "Upload failed",
-        description: error.message || "An error occurred during upload.",
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {
@@ -406,11 +371,12 @@ export const Upload = () => {
                     disabled={isUploading}
                   >
                     <SelectTrigger>
-                      <SelectValue />
+                      <SelectValue placeholder="Select Release Rights *" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="yes">Yes, I release the rights</SelectItem>
-                      <SelectItem value="no">No, I retain all rights</SelectItem>
+                      <SelectItem value="creator">This work is created by me and anyone is free to use it.</SelectItem>
+                      <SelectItem value="family_or_friend">This work is created by my family/friends and I took permission to upload their work.</SelectItem>
+                      <SelectItem value="downloaded">I downloaded this from the internet and/or I don't know if it is free to share.</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

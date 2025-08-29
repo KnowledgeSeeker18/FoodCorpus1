@@ -21,8 +21,8 @@ import {
   TrendingUp,
   Edit
 } from "lucide-react";
-
-const API_BASE_URL = 'https://api.corpus.swecha.org/api/v1';
+import { API_BASE_URL, clearToken } from "@/lib/auth";
+import { useToast } from "@/hooks/use-toast"; // Import useToast
 
 interface UserProfile {
   id: string;
@@ -51,7 +51,11 @@ export const Profile = () => {
   });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
+  const [allUserContributions, setAllUserContributions] = useState<Contribution[]>([]); // New state for all contributions
+  const [filteredContributions, setFilteredContributions] = useState<Contribution[]>([]); // New state for filtered contributions
+  const [selectedMediaType, setSelectedMediaType] = useState<string | null>(null); // New state for selected media type
   const navigate = useNavigate();
+  const { toast } = useToast(); // Initialize toast
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -61,6 +65,14 @@ export const Profile = () => {
     }
     fetchUserProfile();
   }, [navigate]);
+
+  useEffect(() => {
+    if (selectedMediaType === null) {
+      setFilteredContributions(allUserContributions);
+    } else {
+      setFilteredContributions(allUserContributions.filter(c => c.media_type === selectedMediaType));
+    }
+  }, [selectedMediaType, allUserContributions]);
 
   const fetchUserProfile = async () => {
     const token = localStorage.getItem('token');
@@ -80,31 +92,9 @@ export const Profile = () => {
       if (profileResponse.ok) {
         const profileData = await profileResponse.json();
         setProfile(profileData);
-
-        // Fetch user records for stats
-        const recordsResponse = await fetch(`${API_BASE_URL}/records/my`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
-
-        if (recordsResponse.ok) {
-          const recordsData = await recordsResponse.json();
-          const records = recordsData.records || [];
-          
-          const newStats = {
-            total: records.length,
-            images: records.filter((r: any) => r.media_type === 'image').length,
-            videos: records.filter((r: any) => r.media_type === 'video').length,
-            audio: records.filter((r: any) => r.media_type === 'audio').length,
-            text: records.filter((r: any) => r.media_type === 'text').length,
-          };
-          setStats(newStats);
-        }
+        fetchUserContributions(profileData.id, token); // Fetch contributions after profile
       } else if (profileResponse.status === 401) {
-        localStorage.removeItem('token');
-        navigate('/login');
+        clearToken(); // Use clearToken from auth.ts
       } else {
         setError('Failed to fetch profile information');
       }
@@ -114,6 +104,84 @@ export const Profile = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  interface Contribution {
+    id: string;
+    title: string;
+    description: string;
+    media_type: 'audio' | 'video' | 'text' | 'image' | 'other';
+    size: number;
+    timestamp: string;
+    language: string; // Added language
+    latitude?: number; // Added latitude
+    longitude?: number; // Added longitude
+  }
+
+  const getMediaIcon = (mediaType: string) => {
+    switch (mediaType) {
+      case 'image': return Image;
+      case 'video': return Video;
+      case 'audio': return Music;
+      case 'text': return FileText;
+      default: return FileText;
+    }
+  };
+
+  const getMediaColor = (mediaType: string) => {
+    switch (mediaType) {
+      case 'image': return 'bg-blue-100 text-blue-700';
+      case 'video': return 'bg-purple-100 text-purple-700';
+      case 'audio': return 'bg-green-100 text-green-700';
+      case 'text': return 'bg-orange-100 text-orange-700';
+      default: return 'bg-gray-100 text-gray-700';
+    }
+  };
+
+  const fetchUserContributions = async (userId: string, token: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/${userId}/contributions`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        let allContributions: Contribution[] = [];
+        if (data.audio_contributions) allContributions = allContributions.concat(data.audio_contributions.map((c: Contribution) => ({ ...c, media_type: 'audio' })));
+        if (data.video_contributions) allContributions = allContributions.concat(data.video_contributions.map((c: Contribution) => ({ ...c, media_type: 'video' })));
+        if (data.text_contributions) allContributions = allContributions.concat(data.text_contributions.map((c: Contribution) => ({ ...c, media_type: 'text' })));
+        if (data.image_contributions) allContributions = allContributions.concat(data.image_contributions.map((c: Contribution) => ({ ...c, media_type: 'image' })));
+
+        setAllUserContributions(allContributions); // Store all contributions
+
+        const newStats = {
+          total: allContributions.length,
+          images: allContributions.filter(c => c.media_type === 'image').length,
+          videos: allContributions.filter(c => c.media_type === 'video').length,
+          audio: allContributions.filter(c => c.media_type === 'audio').length,
+          text: allContributions.filter(c => c.media_type === 'text').length,
+        };
+        setStats(newStats);
+
+      } else {
+        setError(data.message || 'Failed to fetch user contributions.');
+        if (response.status === 401) {
+          clearToken();
+        }
+      }
+    } catch (error) {
+      console.error('Fetch contributions error:', error);
+      setError('An error occurred while fetching contributions. Please try again later.');
+    }
+  };
+
+  const handleMediaTypeClick = (mediaType: string | null) => {
+    setSelectedMediaType(mediaType);
   };
 
   const formatDate = (dateString: string) => {
@@ -248,15 +316,6 @@ export const Profile = () => {
                     </div>
                   )}
 
-                  <div className="flex items-center space-x-3">
-                    <div className="p-2 rounded-lg bg-primary/10">
-                      <User className="h-5 w-5 text-primary" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">User ID</p>
-                      <p className="font-medium text-foreground font-mono text-sm">{profile?.id}</p>
-                    </div>
-                  </div>
 
                   {profile?.created_at && (
                     <div className="flex items-center space-x-3">
@@ -284,50 +343,125 @@ export const Profile = () => {
               <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
                   <div className="text-center">
-                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-primary mb-3">
-                      <Trophy className="h-8 w-8 text-primary-foreground" />
-                    </div>
-                    <h3 className="text-2xl font-bold text-foreground">{stats.total}</h3>
-                    <p className="text-sm text-muted-foreground">Total</p>
+                    <Button variant="ghost" className="flex flex-col items-center justify-center w-full h-full p-0" onClick={() => handleMediaTypeClick(null)}>
+                      <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-primary mb-3">
+                        <Trophy className="h-8 w-8 text-primary-foreground" />
+                      </div>
+                      <h3 className="text-2xl font-bold text-foreground">{stats.total}</h3>
+                      <p className="text-sm text-muted-foreground">Total</p>
+                    </Button>
                   </div>
 
                   <div className="text-center">
-                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-100 mb-3">
-                      <Image className="h-8 w-8 text-blue-700" />
-                    </div>
-                    <h3 className="text-2xl font-bold text-foreground">{stats.images}</h3>
-                    <p className="text-sm text-muted-foreground">Images</p>
+                    <Button variant="ghost" className="flex flex-col items-center justify-center w-full h-full p-0" onClick={() => handleMediaTypeClick('image')}>
+                      <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-100 mb-3">
+                        <Image className="h-8 w-8 text-blue-700" />
+                      </div>
+                      <h3 className="text-2xl font-bold text-foreground">{stats.images}</h3>
+                      <p className="text-sm text-muted-foreground">Images</p>
+                    </Button>
                   </div>
 
                   <div className="text-center">
-                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-purple-100 mb-3">
-                      <Video className="h-8 w-8 text-purple-700" />
-                    </div>
-                    <h3 className="text-2xl font-bold text-foreground">{stats.videos}</h3>
-                    <p className="text-sm text-muted-foreground">Videos</p>
+                    <Button variant="ghost" className="flex flex-col items-center justify-center w-full h-full p-0" onClick={() => handleMediaTypeClick('video')}>
+                      <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-purple-100 mb-3">
+                        <Video className="h-8 w-8 text-purple-700" />
+                      </div>
+                      <h3 className="text-2xl font-bold text-foreground">{stats.videos}</h3>
+                      <p className="text-sm text-muted-foreground">Videos</p>
+                    </Button>
                   </div>
 
                   <div className="text-center">
-                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 mb-3">
-                      <Music className="h-8 w-8 text-green-700" />
-                    </div>
-                    <h3 className="text-2xl font-bold text-foreground">{stats.audio}</h3>
-                    <p className="text-sm text-muted-foreground">Audio</p>
+                    <Button variant="ghost" className="flex flex-col items-center justify-center w-full h-full p-0" onClick={() => handleMediaTypeClick('audio')}>
+                      <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 mb-3">
+                        <Music className="h-8 w-8 text-green-700" />
+                      </div>
+                      <h3 className="text-2xl font-bold text-foreground">{stats.audio}</h3>
+                      <p className="text-sm text-muted-foreground">Audio</p>
+                    </Button>
                   </div>
 
                   <div className="text-center">
-                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-orange-100 mb-3">
-                      <FileText className="h-8 w-8 text-orange-700" />
-                    </div>
-                    <h3 className="text-2xl font-bold text-foreground">{stats.text}</h3>
-                    <p className="text-sm text-muted-foreground">Text</p>
+                    <Button variant="ghost" className="flex flex-col items-center justify-center w-full h-full p-0" onClick={() => handleMediaTypeClick('text')}>
+                      <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-orange-100 mb-3">
+                        <FileText className="h-8 w-8 text-orange-700" />
+                      </div>
+                      <h3 className="text-2xl font-bold text-foreground">{stats.text}</h3>
+                      <p className="text-sm text-muted-foreground">Text</p>
+                    </Button>
                   </div>
                 </div>
               </CardContent>
             </Card>
 
+            {/* Filtered Contributions List */}
+            <Card className="card-glass shadow-soft animate-slide-up" style={{ animationDelay: '0.2s' }}>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <TrendingUp className="h-6 w-6 text-primary" />
+                  {selectedMediaType ? `${selectedMediaType.charAt(0).toUpperCase() + selectedMediaType.slice(1)} Contributions` : 'All Contributions'}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {filteredContributions.length === 0 ? (
+                  <div className="text-center py-12">
+                    <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-muted/50 mb-4">
+                      <FileText className="h-10 w-10 text-muted-foreground" />
+                    </div>
+                    <h3 className="text-lg font-semibold text-foreground mb-2">
+                      No {selectedMediaType || ''} contributions found.
+                    </h3>
+                    <p className="text-muted-foreground mb-6">
+                      Start contributing to earn achievement badges!
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {filteredContributions.map((contribution, index) => {
+                      const Icon = getMediaIcon(contribution.media_type);
+                      return (
+                        <div
+                          key={contribution.id}
+                          className="flex items-center space-x-4 p-4 border border-border rounded-lg hover:bg-muted/30 transition-colors animate-fade-in"
+                          style={{ animationDelay: `${index * 0.05}s` }}
+                        >
+                          <div className={`p-3 rounded-lg ${getMediaColor(contribution.media_type)}`}>
+                            <Icon className="h-6 w-6" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-medium text-foreground truncate">
+                              {contribution.title}
+                            </h4>
+                            <p className="text-sm text-muted-foreground truncate">
+                              {contribution.description}
+                            </p>
+                            <div className="flex items-center gap-3 mt-2">
+                              <Badge variant="secondary" className="text-xs">
+                                {contribution.language}
+                              </Badge>
+                              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                <Calendar className="h-3 w-3" />
+                                {formatDate(contribution.timestamp)}
+                              </div>
+                              {contribution.latitude && contribution.longitude && (
+                                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                  <MapPin className="h-3 w-3" />
+                                  Location
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             {/* Achievement Badges */}
-            <Card className="card-glass shadow-soft animate-scale-in" style={{ animationDelay: '0.2s' }}>
+            <Card className="card-glass shadow-soft animate-scale-in" style={{ animationDelay: '0.3s' }}>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Trophy className="h-5 w-5 text-primary" />

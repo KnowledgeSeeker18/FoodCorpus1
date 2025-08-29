@@ -7,8 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { Utensils, Loader2 } from "lucide-react";
-
-const API_BASE_URL = 'https://api.corpus.swecha.org/api/v1';
+import { API_BASE_URL } from "@/lib/auth"; // Import API_BASE_URL from auth.ts
 
 export const Login = () => {
   const [formData, setFormData] = useState({
